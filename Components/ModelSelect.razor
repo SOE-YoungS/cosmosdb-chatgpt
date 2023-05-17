@@ -1,0 +1,66 @@
+﻿@*@inject Model model *@
+
+<div class="modal fade show d-block bg-dark bg-opacity-75" id="myModal" aria-modal="true" role="dialog">
+    <div class="modal-dialog bg-dark">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title">@Title</h4>
+                <button type="button" class="btn-close" aria-label="Close" @onclick="@Cancel"></button>
+            </div>
+            <div class="modal-body">
+                <select class="dropdown btn-primary" @bind:get="selected" @bind:set="SetSelected">
+                    <option value="">Select an option</option>
+                    @foreach (var model in ModelList)
+                    {
+                        <option value="@model.DeploymentId"> @model.Name </option>
+                    }
+
+                </select>
+                <br />
+                <p>@selected</p>
+                <button type="button" class="btn btn-secondary"
+                        @onclick="@Cancel">
+                    Cancel
+                </button>
+            </div>
+        
+        </div>
+    </div>
+</div>
+@code {
+
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public Model? ModelId { get; set; } = new Model("", "");
+    [Parameter] public EventCallback<Model> OnClose { get; set; }
+
+    List<Model> ModelList = new List<Model>() {
+        new Model("ChatGPT4", "GPT-4"), 
+        new Model("ChatGPT", "GPT-3.5-Turbo"), 
+        new Model("text-davinci-003", "text-davinci-003"),
+        new Model("code-davinci-002", "code-davinci-002"),
+        new Model("text-similarity-curie-001", "text-similarity-curie-001"),
+        new Model("text-similarity-ada-001", "text-similarity-ada-001")
+    };
+
+    private string selected = null!;
+
+    private Task ModelSelected()
+    {
+        return OnClose.InvokeAsync(ModelId);
+    }
+
+    private Task SetSelected(string value)
+    {
+        var selectedModel = ModelList.Find(e => e.DeploymentId == value);
+        if (selectedModel != null)
+            return OnClose.InvokeAsync(selectedModel);
+        else
+            return null;
+    }
+    private Task Cancel()
+    {
+
+        return OnClose.InvokeAsync(null);
+    }
+}

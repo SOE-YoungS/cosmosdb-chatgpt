@@ -1,4 +1,5 @@
-﻿using Cosmos.Chat.GPT.Constants;
+﻿using Azure.AI.OpenAI;
+using Cosmos.Chat.GPT.Constants;
 using Cosmos.Chat.GPT.Models;
 
 namespace Cosmos.Chat.GPT.Services;
@@ -25,15 +26,15 @@ public class ChatService
     /// <summary>
     /// Returns list of chat session ids and names for left-hand nav to bind to (display Name and ChatSessionId as hidden)
     /// </summary>
-    public async Task<List<Session>> GetAllChatSessionsAsync()
+    public async Task<List<Session>> GetAllChatSessionsAsync(string userId)
     {
-        return _sessions = await _cosmosDbService.GetSessionsAsync();
+        return _sessions = await _cosmosDbService.GetSessionsAsync(userId);
     }
 
     /// <summary>
     /// Returns the chat messages to display on the main web page when the user selects a chat from the left-hand nav
     /// </summary>
-    public async Task<List<Message>> GetChatSessionMessagesAsync(string? sessionId)
+    public async Task<List<Message>> GetChatSessionMessagesAsync(string? sessionId, string? userId)
     {
         ArgumentNullException.ThrowIfNull(sessionId);
 
@@ -44,12 +45,12 @@ public class ChatService
             return Enumerable.Empty<Message>().ToList();
         }
 
-        int index = _sessions.FindIndex(s => s.SessionId == sessionId);
+        int index = _sessions.FindIndex(s => s.SessionId == sessionId && s.UserId == userId);
 
         if (_sessions[index].Messages.Count == 0)
         {
             // Messages are not cached, go read from database
-            chatMessages = await _cosmosDbService.GetSessionMessagesAsync(sessionId);
+            chatMessages = await _cosmosDbService.GetSessionMessagesAsync(sessionId, userId);
 
             // Cache results
             _sessions[index].Messages = chatMessages;
@@ -66,9 +67,11 @@ public class ChatService
     /// <summary>
     /// User creates a new Chat Session.
     /// </summary>
-    public async Task CreateNewChatSessionAsync()
+    public async Task CreateNewChatSessionAsync(string userId)
     {
         Session session = new();
+        session.UserId = userId;
+        session.ModelId = _openAiService._deploymentName;
 
         _sessions.Add(session);
 
@@ -76,6 +79,7 @@ public class ChatService
 
     }
 
+    
     /// <summary>
     /// Rename the Chat Ssssion from "New Chat" to the summary provided by OpenAI
     /// </summary>
@@ -86,6 +90,20 @@ public class ChatService
         int index = _sessions.FindIndex(s => s.SessionId == sessionId);
 
         _sessions[index].Name = newChatSessionName;
+
+        await _cosmosDbService.UpdateSessionAsync(_sessions[index]);
+    }
+
+    /// <summary>
+    /// Update the current model in use for the chat session.
+    /// </summary>
+    public async Task UpdateChatSessionModelAsync(string? sessionId, string newModelId)
+    {
+        ArgumentNullException.ThrowIfNull(sessionId);
+
+        int index = _sessions.FindIndex(s => s.SessionId == sessionId);
+
+        _sessions[index].ModelId = newModelId;
 
         await _cosmosDbService.UpdateSessionAsync(_sessions[index]);
     }
@@ -107,17 +125,35 @@ public class ChatService
     /// <summary>
     /// Get a completion from _openAiService
     /// </summary>
-    public async Task<string> GetChatCompletionAsync(string? sessionId, string prompt)
+    public async Task<string> GetChatCompletionAsync(string? sessionId, string? userId, string prompt, string deploymentName = "")
     {
         ArgumentNullException.ThrowIfNull(sessionId);
 
-        Message promptMessage = await AddPromptMessageAsync(sessionId, prompt);
+        Message promptMessage = await AddPromptMessageAsync(sessionId, userId, prompt);
 
-        string conversation = GetChatSessionConversation(sessionId);
+        string conversation = GetChatSessionConversation(sessionId, userId);
 
-        (string response, int promptTokens, int responseTokens) = await _openAiService.GetChatCompletionAsync(sessionId, conversation);
+        (string response, int promptTokens, int responseTokens) = await _openAiService.GetChatCompletionAsync(sessionId, conversation, deploymentName);
 
-        await AddPromptCompletionMessagesAsync(sessionId, promptTokens, responseTokens, promptMessage, response);
+        await AddPromptCompletionMessagesAsync(sessionId, userId, promptTokens, responseTokens, promptMessage, response);
+
+        return response;
+    }
+
+    /// <summary>
+    /// Get a completion from _openAiService
+    /// </summary>
+    public async Task<string> GetCompletionAsync(string? sessionId, string? userId, string prompt, string deploymentName = "")
+    {
+        ArgumentNullException.ThrowIfNull(sessionId);
+
+        Message promptMessage = await AddPromptMessageAsync(sessionId, userId, prompt);
+
+        //string conversation = GetChatSessionConversation(sessionId, userId);
+
+        (string response, int promptTokens, int responseTokens) = await _openAiService.GetCompletionAsync(sessionId, prompt, deploymentName);
+
+        await AddPromptCompletionMessagesAsync(sessionId, userId, promptTokens, responseTokens, promptMessage, response);
 
         return response;
     }
@@ -125,14 +161,14 @@ public class ChatService
     /// <summary>
     /// Get current conversation from newest to oldest up to max conversation tokens and add to the prompt
     /// </summary>
-    private string GetChatSessionConversation(string sessionId)
+    private string GetChatSessionConversation(string sessionId, string userId)
     {
 
         int? tokensUsed = 0;
 
         List<string> conversationBuilder = new List<string>();
         
-        int index = _sessions.FindIndex(s => s.SessionId == sessionId);
+        int index = _sessions.FindIndex(s => s.SessionId == sessionId && s.UserId == userId);
 
         List<Message> messages = _sessions[index].Messages;
 
@@ -168,9 +204,9 @@ public class ChatService
     /// <summary>
     /// Add user prompt to the chat session message list object and insert into the data service.
     /// </summary>
-    private async Task<Message> AddPromptMessageAsync(string sessionId, string promptText)
+    private async Task<Message> AddPromptMessageAsync(string sessionId, string? userId, string promptText)
     {
-        Message promptMessage = new(sessionId, nameof(Participants.User), default, promptText);
+        Message promptMessage = new(sessionId, userId, nameof(Participants.User), default, promptText);
 
         int index = _sessions.FindIndex(s => s.SessionId == sessionId);
 
@@ -182,13 +218,13 @@ public class ChatService
     /// <summary>
     /// Add user prompt and AI assistance response to the chat session message list object and insert into the data service as a transaction.
     /// </summary>
-    private async Task AddPromptCompletionMessagesAsync(string sessionId, int promptTokens, int completionTokens, Message promptMessage, string completionText)
+    private async Task AddPromptCompletionMessagesAsync(string sessionId, string? userId, int promptTokens, int completionTokens, Message promptMessage, string completionText)
     {
 
         int index = _sessions.FindIndex(s => s.SessionId == sessionId);
         
         //Create completion message, add to the cache
-        Message completionMessage = new(sessionId, nameof(Participants.Assistant), completionTokens, completionText);
+        Message completionMessage = new(sessionId, userId, nameof(Participants.Assistant), completionTokens, completionText);
         _sessions[index].AddMessage(completionMessage);
 
         

@@ -9,20 +9,20 @@ namespace Cosmos.Chat.GPT.Services;
 /// </summary>
 public class OpenAiService
 {
-    private readonly string _deploymentName = String.Empty;
+    public readonly string _deploymentName = String.Empty;
     private readonly int _maxConversationTokens = default;
     private readonly OpenAIClient _client;
 
-    /// <summary>
-    /// System prompt to send with user prompts to instruct the model for chat session
-    /// </summary>
-    private readonly string _systemPrompt = @"
-        You are an AI assistant that helps people find information.
-        Provide concise answers that are polite and professional." + Environment.NewLine;
-    
-    /// <summary>    
-    /// System prompt to send with user prompts to instruct the model for summarization
-    /// </summary>
+
+    //System prompt to send with user prompts to instruct the model for chat session
+    private readonly string _systemPrompt = @"
+        You are an AI assistant that helps people find information.
+        Provide concise answers that are polite and professional." + Environment.NewLine +
+ "If a code example is requested, format the code in a code block suitable for display in a chat window.";
+
+
+
+    //System prompt to send with user prompts to instruct the model for summarization
     private readonly string _summarizePrompt = @"
         Summarize this prompt in one or two words to use as a label in a button on a web page" + Environment.NewLine;
 
@@ -48,10 +48,10 @@ public class OpenAiService
     /// </remarks>
     public OpenAiService(string endpoint, string key, string deploymentName, string maxConversationTokens)
     {
-        ArgumentNullException.ThrowIfNullOrEmpty(deploymentName);
-        ArgumentNullException.ThrowIfNullOrEmpty(maxConversationTokens);
         ArgumentNullException.ThrowIfNullOrEmpty(endpoint);
         ArgumentNullException.ThrowIfNullOrEmpty(key);
+        ArgumentNullException.ThrowIfNullOrEmpty(deploymentName);
+        ArgumentNullException.ThrowIfNullOrEmpty(maxConversationTokens);
 
         _deploymentName = deploymentName;
         _maxConversationTokens = Int32.TryParse(maxConversationTokens, out _maxConversationTokens) ? _maxConversationTokens : 3000;
@@ -65,7 +65,7 @@ public class OpenAiService
     /// <param name="sessionId">Chat session identifier for the current conversation.</param>
     /// <param name="prompt">Prompt message to send to the deployment.</param>
     /// <returns>Response from the OpenAI model along with tokens for the prompt and response.</returns>
-    public async Task<(string response, int promptTokens, int responseTokens)> GetChatCompletionAsync(string sessionId, string userPrompt)
+    public async Task<(string response, int promptTokens, int responseTokens)> GetChatCompletionAsync(string sessionId, string userPrompt, string deploymentName = "")
     {
         
         ChatMessage systemMessage = new(ChatRole.System, _systemPrompt);
@@ -76,7 +76,7 @@ public class OpenAiService
             
             Messages =
             {
-                //systemMessage,
+                systemMessage,
                 userMessage
             },
             User = sessionId,
@@ -87,8 +87,7 @@ public class OpenAiService
             PresencePenalty = 0
         };
 
-        Response<ChatCompletions> completionsResponse = await _client.GetChatCompletionsAsync(_deploymentName, options);
-
+        Response<ChatCompletions> completionsResponse = await _client.GetChatCompletionsAsync(string.IsNullOrEmpty(deploymentName) ? _deploymentName : deploymentName, options);
 
         ChatCompletions completions = completionsResponse.Value;
 
@@ -132,5 +131,35 @@ public class OpenAiService
         string summary =  completions.Choices[0].Message.Content;
 
         return summary;
+    }
+
+    // <summary>
+    /// Sends a prompt to the deployed OpenAI LLM model and returns the response.
+    /// </summary>
+    /// <param name="sessionId">Chat session identifier for the current conversation.</param>
+    /// <param name="prompt">Prompt message to send to the deployment.</param>
+    /// <returns>Response from the OpenAI model along with tokens for the prompt and response.</returns>
+    public async Task<(string response, int promptTokens, int responseTokens)> GetCompletionAsync(string sessionId, string userPrompt, string deploymentName = "")
+    {
+        CompletionsOptions options = new()
+        {
+            User = sessionId,
+            MaxTokens = 256,
+            Temperature = 0.3f,
+            NucleusSamplingFactor = 0.5f,
+            FrequencyPenalty = 0,
+            PresencePenalty = 0
+        };
+        options.Prompts.Add(userPrompt);
+
+        Response<Completions> completionsResponse = await _client.GetCompletionsAsync(string.IsNullOrEmpty(deploymentName) ? _deploymentName : deploymentName, options);
+
+        Completions completions = completionsResponse.Value;
+
+        return (
+            response: completions.Choices[0].Text,
+            promptTokens: completions.Usage.PromptTokens,
+            responseTokens: completions.Usage.CompletionTokens
+        );
     }
 }

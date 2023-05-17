@@ -1,12 +1,28 @@
+using Cosmos.Chat.GPT.Models;
 using Cosmos.Chat.GPT.Options;
 using Cosmos.Chat.GPT.Services;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc.Authorization;
 using Microsoft.Extensions.Options;
+using Microsoft.Identity.Web;
+using Microsoft.Identity.Web.UI;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.RegisterConfiguration();
-builder.Services.AddRazorPages();
-builder.Services.AddServerSideBlazor();
+//builder.Services.AddControllersWithViews().AddMvcOptions(options =>
+//{
+//    var policy = new AuthorizationPolicyBuilder()
+//        .RequireAuthenticatedUser()
+//        .Build();
+//    options.Filters.Add(new AuthorizeFilter(policy));
+//}).AddMicrosoftIdentityUI();
+builder.Services.AddRazorPages().AddMicrosoftIdentityUI();
+builder.Services.AddServerSideBlazor()
+    .AddMicrosoftIdentityConsentHandler();
+
+
 builder.Services.RegisterServices();
 
 var app = builder.Build();
@@ -20,6 +36,9 @@ if (!app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseRouting();
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapBlazorHub();
 app.MapFallbackToPage("/_Host");
@@ -35,6 +54,21 @@ static class ProgramExtensions
 
         builder.Services.AddOptions<OpenAi>()
             .Bind(builder.Configuration.GetSection(nameof(OpenAi)));
+
+        // Sign-in users with the Microsoft identity platform
+        string[] initialScopes = builder.Configuration.GetValue<string>("DownstreamApi:Scopes")?.Split(' ');
+
+        builder.Services.AddAuthentication(OpenIdConnectDefaults.AuthenticationScheme)
+            .AddMicrosoftIdentityWebApp(options => builder.Configuration.Bind("AzureAd", options))
+            .EnableTokenAcquisitionToCallDownstreamApi(initialScopes)
+                .AddMicrosoftGraph(builder.Configuration.GetSection("DownstreamApi"))
+                .AddInMemoryTokenCaches();
+
+        builder.Services.AddAuthorization(options =>
+        {
+            // By default, all incoming requests will be authorized according to the default policy
+            options.FallbackPolicy = options.DefaultPolicy;
+        });
     }
 
     public static void RegisterServices(this IServiceCollection services)
@@ -74,5 +108,9 @@ static class ProgramExtensions
             }
         });
         services.AddSingleton<ChatService>();
+
+        //services.AddScoped<Model>(_ => new Model("", ""));
+
+        services.AddHttpClient();
     }
 }

@@ -1,4 +1,5 @@
 using Newtonsoft.Json;
+using System.Security.Principal;
 
 namespace Cosmos.Chat.GPT.Models;
 
@@ -16,6 +17,10 @@ public record Session
     /// </summary>
     public string SessionId { get; set; }
 
+    public string ModelId { get; set; }
+
+    public string UserId { get; set; }
+
     public int? TokensUsed { get; set; }
 
     public string Name { get; set; }
@@ -28,9 +33,11 @@ public record Session
         Id = Guid.NewGuid().ToString();
         Type = nameof(Session);
         SessionId = this.Id;
+        UserId = string.Empty;
         TokensUsed = 0;
         Name = "New Chat";
         Messages = new List<Message>();
+        ModelId = nameof(Session.ModelId);
     }
 
     public void AddMessage(Message message)

@@ -1,4 +1,5 @@
-﻿@page "/"
+﻿@using Constants
+@page "/"
 
 <PageTitle>Azure Cosmos DB & Azure OpenAI</PageTitle>
 <main class="h-100 d-flex flex-row justify-content-start">
@@ -35,6 +36,7 @@
     public async void LoadChatEventHandlerAsync(Session session)
     {
         CurrentSession = session;
+        session.UserId = Interface.UserId;
 
         if (ChatPane is not null)
         {

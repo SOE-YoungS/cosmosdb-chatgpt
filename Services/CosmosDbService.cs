@@ -24,10 +24,11 @@ public class CosmosDbService
     /// </remarks>
     public CosmosDbService(string endpoint, string key, string databaseName, string containerName)
     {
-        ArgumentNullException.ThrowIfNullOrEmpty(databaseName);
-        ArgumentNullException.ThrowIfNullOrEmpty(containerName);
         ArgumentNullException.ThrowIfNullOrEmpty(endpoint);
         ArgumentNullException.ThrowIfNullOrEmpty(key);
+        ArgumentNullException.ThrowIfNullOrEmpty(databaseName);
+        ArgumentNullException.ThrowIfNullOrEmpty(containerName);
+
 
         CosmosSerializationOptions options = new()
         {
@@ -49,10 +50,11 @@ public class CosmosDbService
     /// Gets a list of all current chat sessions.
     /// </summary>
     /// <returns>List of distinct chat session items.</returns>
-    public async Task<List<Session>> GetSessionsAsync()
+    public async Task<List<Session>> GetSessionsAsync(string userId)
     {
-        QueryDefinition query = new QueryDefinition("SELECT DISTINCT * FROM c WHERE c.type = @type")
-            .WithParameter("@type", nameof(Session));
+        QueryDefinition query = new QueryDefinition("SELECT DISTINCT * FROM c WHERE c.type = @type AND c.userId = @userId")
+            .WithParameter("@type", nameof(Session))
+            .WithParameter("@userId", userId);
 
         FeedIterator<Session> response = _container.GetItemQueryIterator<Session>(query);
 
@@ -70,11 +72,12 @@ public class CosmosDbService
     /// </summary>
     /// <param name="sessionId">Chat session identifier used to filter messsages.</param>
     /// <returns>List of chat message items for the specified session.</returns>
-    public async Task<List<Message>> GetSessionMessagesAsync(string sessionId)
+    public async Task<List<Message>> GetSessionMessagesAsync(string sessionId, string userId)
     {
-        QueryDefinition query = new QueryDefinition("SELECT * FROM c WHERE c.sessionId = @sessionId AND c.type = @type")
+        QueryDefinition query = new QueryDefinition("SELECT * FROM c WHERE c.sessionId = @sessionId AND c.type = @type AND c.userId = @userId")
             .WithParameter("@sessionId", sessionId)
-            .WithParameter("@type", nameof(Message));
+            .WithParameter("@type", nameof(Message))
+            .WithParameter("@userId", userId);
 
         FeedIterator<Message> results = _container.GetItemQueryIterator<Message>(query);
 
@@ -109,7 +112,6 @@ public class CosmosDbService
     public async Task<Message> InsertMessageAsync(Message message)
     {
         PartitionKey partitionKey = new(message.SessionId);
-        Message newMessage = message with { TimeStamp = DateTime.UtcNow };
         return await _container.CreateItemAsync<Message>(
             item: message,
             partitionKey: partitionKey
@@ -161,19 +163,21 @@ public class CosmosDbService
     {
         PartitionKey partitionKey = new(sessionId);
 
-        QueryDefinition query = new QueryDefinition("SELECT VALUE c.id FROM c WHERE c.sessionId = @sessionId")
+        // TODO: await container.DeleteAllItemsByPartitionKeyStreamAsync(partitionKey);
+
+        QueryDefinition query = new QueryDefinition("SELECT c.id FROM c WHERE c.sessionId = @sessionId")
                 .WithParameter("@sessionId", sessionId);
 
-        FeedIterator<string> response = _container.GetItemQueryIterator<string>(query);
+        FeedIterator<Message> response = _container.GetItemQueryIterator<Message>(query);
 
         TransactionalBatch batch = _container.CreateTransactionalBatch(partitionKey);
         while (response.HasMoreResults)
         {
-            FeedResponse<string> results = await response.ReadNextAsync();
-            foreach (var itemId in results)
+            FeedResponse<Message> results = await response.ReadNextAsync();
+            foreach (var item in results)
             {
                 batch.DeleteItem(
-                    id: itemId
+                    id: item.Id
                 );
             }
         }
